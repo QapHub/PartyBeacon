@@ -13,7 +13,7 @@
 local ADDON, ns = ...
 _G.PartyBeacon = ns
 
-ns.version = "1.0.0"
+ns.version = "1.0.1"
 
 local DEFAULTS = {
     enabled        = true,
@@ -71,6 +71,39 @@ local function Print(msg)
 end
 ns.Print = Print
 
+-- WoW Forever runs on the modern engine, where some unit info can come back
+-- as a "secret value" that addons may not compare, test or use as a table
+-- key. Safe() turns those into nil so we just skip that unit.
+local issecret = issecretvalue or function() return false end
+ns.issecret = issecret
+local function Safe(v)
+    if v ~= nil and issecret(v) then return nil end
+    return v
+end
+ns.Safe = Safe
+
+-- Errors are caught, printed once, and kept in SavedVariables (last 10) so a
+-- problem on a client we can't test on is visible instead of silent.
+local seenErrors = {}
+function ns:RecordError(where, err)
+    local msg = tostring(where) .. ": " .. tostring(err)
+    if self.db then
+        local list = self.db.errors
+        list[#list + 1] = date and (date("%Y-%m-%d %H:%M:%S") .. " " .. msg) or msg
+        while #list > 10 do table.remove(list, 1) end
+    end
+    if not seenErrors[msg] then
+        seenErrors[msg] = true
+        Print("|cffff5555error|r " .. msg .. "  (|cffffff00/pb debug|r for details)")
+    end
+end
+
+function ns:Try(where, fn, ...)
+    local ok, err = pcall(fn, ...)
+    if not ok then self:RecordError(where, err) end
+    return ok
+end
+
 local function CopyDefaults(dst, src)
     for k, v in pairs(src) do
         if type(v) == "table" then
@@ -100,9 +133,10 @@ end
 function ns:ColorFor(mode, unit, slot, custom, now)
     if mode == "class" and unit then
         local _, cls = UnitClass(unit)
+        cls = Safe(cls)
         local colors = CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS
         local c = cls and colors and colors[cls]
-        if c and UnitIsPlayer(unit) then return c.r, c.g, c.b end
+        if c and Safe(UnitIsPlayer(unit)) then return c.r, c.g, c.b end
         mode = "slot"   -- NPCs (test mode) have no class colour
     end
     if mode == "custom" and custom then
@@ -128,7 +162,7 @@ function ns:RebuildRoster()
         local n = GetNumGroupMembers()
         local mySub
         for i = 1, n do
-            if UnitIsUnit("raid" .. i, "player") then
+            if Safe(UnitIsUnit("raid" .. i, "player")) then
                 local _, _, sub = GetRaidRosterInfo(i)
                 mySub = sub
             end
@@ -137,9 +171,9 @@ function ns:RebuildRoster()
         for i = 1, n do
             local unit = "raid" .. i
             local _, _, sub = GetRaidRosterInfo(i)
-            if UnitExists(unit) and not UnitIsUnit(unit, "player")
+            if UnitExists(unit) and not Safe(UnitIsUnit(unit, "player"))
                and (self.db.scope == "raid" or sub == mySub) then
-                local guid = UnitGUID(unit)
+                local guid = Safe(UnitGUID(unit))
                 if guid then
                     slot = slot + 1
                     members[guid] = { slot = slot, unit = unit }
@@ -149,7 +183,7 @@ function ns:RebuildRoster()
     elseif IsInGroup() then
         for i = 1, 4 do
             local unit = "party" .. i
-            local guid = UnitExists(unit) and UnitGUID(unit)
+            local guid = UnitExists(unit) and Safe(UnitGUID(unit))
             if guid then members[guid] = { slot = i, unit = unit } end
         end
     end
@@ -162,18 +196,19 @@ end
 -- Which slot (colour / icon index) a nameplate unit should be highlighted
 -- with, or nil if it shouldn't be.
 function ns:HighlightSlot(unit)
-    if not self:IsActive() or UnitIsUnit(unit, "player") then return nil end
-    local guid = UnitGUID(unit)
+    if not self:IsActive() or Safe(UnitIsUnit(unit, "player")) then return nil end
+    local guid = Safe(UnitGUID(unit))
     local m = guid and self.members[guid]
     if m then return m.slot end
-    if self.testMode and UnitIsUnit(unit, "target") then return 1 end
+    if self.testMode and Safe(UnitIsUnit(unit, "target")) then return 1 end
     return nil
 end
 
 function ns:ShouldHideOther(unit)
     if not (self:IsActive() and self.db.hideOthers) then return false end
-    if UnitIsUnit(unit, "target") then return false end   -- never hide what you've clicked
-    return UnitIsFriend("player", unit) and not UnitCanAttack("player", unit) and true or false
+    if Safe(UnitIsUnit(unit, "target")) then return false end   -- never hide what you've clicked
+    -- if the game won't tell us, leave the plate alone
+    return Safe(UnitIsFriend("player", unit)) and not Safe(UnitCanAttack("player", unit)) and true or false
 end
 
 -- ---------------------------------------------------------------------------
@@ -184,6 +219,11 @@ end
 local function WantCVar(name, value)
     local restore = ns.db.cvarRestore
     local cur = GetCVar(name)
+    if cur == nil then
+        -- this client doesn't have that setting: never touch it
+        restore[name] = nil
+        return
+    end
     if value ~= nil then
         if restore[name] == nil then restore[name] = cur or "" end
         if cur ~= value then pcall(SetCVar, name, value) end
@@ -203,7 +243,17 @@ function ns:ApplySettings()
     local active = self:IsActive()
     local db = self.db
 
-    WantCVar("nameplateShowFriends", (active and db.autoPlates) and "1" or nil)
+    local plates = (active and db.autoPlates) and "1" or nil
+    -- Friendly player plates: WoW Forever / modern engine name, then the
+    -- Classic name. Whichever this client doesn't have is skipped.
+    WantCVar("nameplateShowFriendlyPlayers", plates)
+    WantCVar("nameplateShowFriends", plates)
+    -- Without "always show", the modern engine only shows plates in combat.
+    WantCVar("nameplateShowAll", plates)
+    -- Test mode lets you preview on a friendly NPC, so show NPC plates then.
+    local npcs = (active and db.autoPlates and self.testMode) and "1" or nil
+    WantCVar("nameplateShowFriendlyNpcs", npcs)
+    WantCVar("nameplateShowFriendlyNPCs", npcs)
     WantCVar("nameplateMaxDistance", (active and db.farPlates) and "41" or nil)
 
     local NP = C_NamePlate
@@ -250,7 +300,7 @@ local function IconInUse(icon)
     end
     for unit in pairs(ns.unitPlate) do check[#check + 1] = unit end
     for _, u in ipairs(check) do
-        if UnitExists(u) and GetRaidTargetIndex(u) == icon then return true end
+        if UnitExists(u) and Safe(GetRaidTargetIndex(u)) == icon then return true end
     end
     return false
 end
@@ -271,7 +321,7 @@ end
 function ns:ClearWorldIcons()
     for guid, icon in pairs(self.iconsSet) do
         local u = UnitForGUID(guid)
-        if u and GetRaidTargetIndex(u) == icon then pcall(SetRaidTarget, u, 0) end
+        if u and Safe(GetRaidTargetIndex(u)) == icon then pcall(SetRaidTarget, u, 0) end
         self.iconsSet[guid] = nil
     end
 end
@@ -288,7 +338,7 @@ function ns:UpdateWorldIcons()
     for guid, m in pairs(self.members) do
         local icon = self.db.icons[m.slot]
         if icon and icon > 0 and not self.iconsSet[guid]
-           and not GetRaidTargetIndex(m.unit) and not IconInUse(icon) then
+           and not Safe(GetRaidTargetIndex(m.unit)) and not IconInUse(icon) then
             if pcall(SetRaidTarget, m.unit, icon) then self.iconsSet[guid] = icon end
         end
     end
@@ -298,11 +348,66 @@ end
 -- refresh everything after any change
 -- ---------------------------------------------------------------------------
 function ns:Refresh()
-    self:RebuildRoster()
-    self:ApplySettings()
-    self:RefreshPlates()
-    self:UpdateWorldIcons()
-    if self.UpdateOptions then self:UpdateOptions() end
+    -- each step on its own, so one failure can't block the rest
+    self:Try("roster", self.RebuildRoster, self)
+    self:Try("settings", self.ApplySettings, self)
+    self:Try("plates", self.RefreshPlates, self)
+    self:Try("markers", self.UpdateWorldIcons, self)
+    if self.UpdateOptions then self:Try("options", self.UpdateOptions, self) end
+end
+
+-- In test mode, say why nothing appeared when the target has no plate.
+local lastHint
+function ns:CheckTestTarget()
+    if not (self.testMode and UnitExists("target")) then return end
+    local plate = C_NamePlate.GetNamePlateForUnit("target")
+    if plate and not (plate.IsForbidden and plate:IsForbidden()) then return end
+    local inInstance, kind = IsInInstance()
+    local hint
+    if plate or (inInstance and kind ~= "none" and Safe(UnitIsFriend("player", "target"))) then
+        hint = "can't draw on that target: the game blocks addons from friendly nameplates inside instances."
+    else
+        hint = "your target has no nameplate showing, so there's nothing to attach the beacon to. "
+            .. "Make sure nameplates are on (Options > Nameplates), the target is close and on screen, "
+            .. "and you're out of combat if the settings just changed. |cffffff00/pb debug|r shows the details."
+    end
+    if hint ~= lastHint then
+        lastHint = hint
+        Print(hint)
+    end
+end
+
+function ns:Debug()
+    local db = self.db
+    local d = {}
+    local function add(k, v) d[#d + 1] = k .. "=" .. tostring(v) end
+    local ver, build, _, toc = GetBuildInfo()
+    add("client", tostring(ver) .. "." .. tostring(build) .. " toc " .. tostring(toc))
+    add("project", WOW_PROJECT_ID)
+    add("enabled", db.enabled)
+    add("active", self:IsActive())
+    add("test", self.testMode or false)
+    add("inGroup", IsInGroup())
+    local n, p = 0, 0
+    for _ in pairs(self.members) do n = n + 1 end
+    for _ in pairs(self.unitPlate) do p = p + 1 end
+    add("members", n)
+    add("platesTracked", p)
+    for _, cv in ipairs({ "nameplateShowFriendlyPlayers", "nameplateShowFriends", "nameplateShowAll",
+                          "nameplateShowEnemies", "nameplateShowFriendlyNpcs", "nameplateMaxDistance",
+                          "nameplateShowOnlyNameForFriendlyPlayerUnits" }) do
+        add(cv, GetCVar(cv))
+    end
+    local tp = UnitExists("target") and C_NamePlate.GetNamePlateForUnit("target")
+    add("targetPlate", UnitExists("target") and (tp and (tp.IsForbidden and tp:IsForbidden() and "forbidden" or "yes") or "none") or "no target")
+    add("combat", InCombatLockdown())
+    add("pendingSettings", self.pendingSettings or false)
+    db.lastDebug = d
+    Print("debug (also saved for support on /reload):")
+    for _, line in ipairs(d) do DEFAULT_CHAT_FRAME:AddMessage("   " .. line) end
+    if #db.errors > 0 then
+        DEFAULT_CHAT_FRAME:AddMessage("   last error: " .. db.errors[#db.errors])
+    end
 end
 
 local refreshQueued
@@ -332,6 +437,8 @@ function ns:SetTestMode(on)
     if on then
         Print("test mode |cff33ff33on|r - your current target is shown as a party member. "
             .. "Target a friendly player or NPC outdoors to see it. |cffffff00/pb test|r again to stop.")
+        lastHint = nil
+        C_Timer.After(0.5, function() ns:Try("test", ns.CheckTestTarget, ns) end)
     else
         Print("test mode off")
     end
@@ -343,23 +450,28 @@ end
 local ev = CreateFrame("Frame")
 ns.eventFrame = ev
 
-ev:SetScript("OnEvent", function(_, event, arg1)
+local function OnEvent(event, arg1)
     if event == "ADDON_LOADED" then
         if arg1 ~= ADDON then return end
         PartyBeaconDB = CopyDefaults(PartyBeaconDB or {}, DEFAULTS)
         PartyBeaconDB.cvarRestore = PartyBeaconDB.cvarRestore or {}
+        PartyBeaconDB.errors = PartyBeaconDB.errors or {}
         ns.db = PartyBeaconDB
-        if ns.CreateOptions then ns:CreateOptions() end
         ev:UnregisterEvent("ADDON_LOADED")
+        if ns.CreateOptions then ns:Try("options window", ns.CreateOptions, ns) end
     elseif event == "PLAYER_LOGIN" then
-        ns:ScanPlates()
+        ns:Try("scan", ns.ScanPlates, ns)
         ns:Refresh()
+        Print("v" .. ns.version .. " loaded - |cffffff00/pb|r for options, |cffffff00/pb test|r to preview on your target.")
     elseif event == "NAME_PLATE_UNIT_ADDED" then
         ns:OnPlateAdded(arg1)
     elseif event == "NAME_PLATE_UNIT_REMOVED" then
         ns:OnPlateRemoved(arg1)
     elseif event == "PLAYER_TARGET_CHANGED" then
         ns:RefreshPlates()
+        if ns.testMode then
+            C_Timer.After(0.3, function() ns:Try("test", ns.CheckTestTarget, ns) end)
+        end
     elseif event == "UNIT_NAME_UPDATE" then
         if ns.unitPlate[arg1] then ns:UpdatePlate(arg1) end
     elseif event == "PLAYER_REGEN_ENABLED" then
@@ -375,6 +487,11 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         -- GROUP_ROSTER_UPDATE, PLAYER_ENTERING_WORLD, ZONE_CHANGED_NEW_AREA
         ns:QueueRefresh()
     end
+end
+
+ev:SetScript("OnEvent", function(_, event, arg1)
+    local ok, err = pcall(OnEvent, event, arg1)
+    if not ok then ns:RecordError(event, err) end
 end)
 
 for _, e in ipairs({
@@ -404,7 +521,7 @@ local function Help()
         "/pb size <16-128>   /pb namesize <8-32>",
         "/pb others on|off  (hide other friendly nameplates)",
         "/pb markers off|instance|always  (shared raid icons)",
-        "/pb status   /pb reset",
+        "/pb status   /pb debug   /pb reset",
     }
     for _, l in ipairs(lines) do DEFAULT_CHAT_FRAME:AddMessage("   |cffffff00" .. l .. "|r") end
 end
@@ -450,11 +567,12 @@ SlashCmdList.PARTYBEACON = function(msg)
     elseif cmd == "markers" and (arg == "off" or arg == "instance" or arg == "always") then
         db.worldIcons = arg; ns:Refresh(); Print("shared world markers: " .. arg)
     elseif cmd == "status" then Status()
+    elseif cmd == "debug" then ns:Debug()
     elseif cmd == "reset" then
-        local restore, click = db.cvarRestore, db.clickRestore
+        local restore, click, errors = db.cvarRestore, db.clickRestore, db.errors
         for k in pairs(db) do db[k] = nil end
         CopyDefaults(db, DEFAULTS)
-        db.cvarRestore, db.clickRestore = restore, click
+        db.cvarRestore, db.clickRestore, db.errors = restore, click, errors
         ns:Refresh()
         Print("settings reset to defaults")
     else

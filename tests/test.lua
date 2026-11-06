@@ -107,12 +107,12 @@ function UnitIsGroupLeader() return group.leader or false end
 function UnitIsGroupAssistant() return false end
 
 function UnitExists(t) return U(t) ~= nil end
-function UnitGUID(t) local u = U(t); return u and u.guid end
-function UnitName(t) local u = U(t); return u and u.name end
+function UnitGUID(t) local u = U(t); if u and u.secret then return SECRET end; return u and u.guid end
+function UnitName(t) local u = U(t); if u and u.nameError then error("boom") end; if u and u.secret then return SECRET end; return u and u.name end
 function UnitClass(t) local u = U(t); return u and u.class, u and u.class end
 function UnitIsPlayer(t) local u = U(t); return u and u.player or false end
 function UnitIsUnit(a, b) local x, y = U(a), U(b); return x ~= nil and y ~= nil and x.guid == y.guid end
-function UnitIsFriend(_, t) local u = U(t); return u and u.friend or false end
+function UnitIsFriend(_, t) local u = U(t); if u and u.secret then return SECRET end; return u and u.friend or false end
 function UnitCanAttack(_, t) local u = U(t); return u and not u.friend or false end
 
 local icons = {}        -- guid -> icon
@@ -131,12 +131,28 @@ function IsInInstance() return instance[1], instance[2] end
 local combat = false
 function InCombatLockdown() return combat end
 
-local cvars = { nameplateShowFriends = "0", nameplateMaxDistance = "20" }
+-- WoW Forever's real CVar names (read from its Wow.exe): there is NO
+-- nameplateShowFriendlyPlayers, and plates only show in combat unless ShowAll is on.
+local cvars = { nameplateShowFriendlyPlayers = "0", nameplateShowAll = "0",
+                nameplateShowFriendlyNpcs = "0", nameplateShowEnemies = "1",
+                nameplateMaxDistance = "20" }
+local unknownSets = 0
 function GetCVar(n) return cvars[n] end
 function SetCVar(n, v)
     if combat then error("protected in combat") end
+    if cvars[n] == nil then unknownSets = unknownSets + 1; return false end
     cvars[n] = tostring(v)
 end
+function GetBuildInfo() return "1.60.1", "70790", "", 16001 end
+WOW_PROJECT_ID = 99
+
+-- secret values: an opaque object that errors if compared/indexed
+local SECRET = setmetatable({}, {
+    __index = function() error("attempt to index a secret value") end,
+    __eq = function() error("attempt to compare a secret value") end,
+    __tostring = function() return "<secret>" end,
+})
+function issecretvalue(v) return rawequal(v, SECRET) end
 
 RAID_CLASS_COLORS = {
     MAGE = { r = 0.25, g = 0.78, b = 0.92 }, PRIEST = { r = 1, g = 1, b = 1 },
@@ -183,7 +199,7 @@ fire("ADDON_LOADED", "PartyBeacon")
 ok(ns.db and ns.db.style == "arrow", "defaults applied")
 ok(PartyBeaconOptions ~= nil, "options frame built")
 fire("PLAYER_LOGIN")
-ok(cvars.nameplateShowFriends == "0", "solo: friendly plates untouched")
+ok(cvars.nameplateShowFriendlyPlayers == "0", "solo: friendly plates untouched")
 ok(not ns:IsActive(), "solo: inactive")
 
 -- join a party
@@ -192,8 +208,14 @@ setUnit("party2", { guid = "P-2", name = "Anduin", class = "PRIEST", player = tr
 group.kind = "party"
 fire("GROUP_ROSTER_UPDATE"); flush()
 ok(ns:IsActive(), "party: active")
-ok(cvars.nameplateShowFriends == "1", "party: friendly plates turned on")
-ok(ns.db.cvarRestore.nameplateShowFriends == "0", "party: original value remembered")
+ok(cvars.nameplateShowFriendlyPlayers == "1", "party: friendly plates turned on")
+ok(ns.db.cvarRestore.nameplateShowFriendlyPlayers == "0", "party: original value remembered")
+ok(cvars.nameplateShowAll == "1", "forever: always-show turned on so plates appear out of combat")
+ok(cvars.nameplateShowFriendlyNpcs == "0", "forever: friendly NPC plates left off outside test mode")
+ok(unknownSets == 0 and ns.db.cvarRestore.nameplateShowFriends == nil, "forever: never touches CVars the client lacks")
+local loaded = false
+for _, m in ipairs(chat) do if m:find("loaded") then loaded = true end end
+ok(loaded, "login message printed")
 ok(clickThrough == true, "party: click-through on")
 ok(cvars.nameplateMaxDistance == "20", "far plates off by default")
 
@@ -271,6 +293,30 @@ ok(cvars.nameplateMaxDistance == "41", "far plates raised")
 ns.db.farPlates = false; ns:Refresh()
 ok(cvars.nameplateMaxDistance == "20", "far plates restored")
 
+-- secret (hidden) unit info: no error, plate left alone
+local errsBefore = #ns.db.errors
+setUnit("hidden", { guid = "P-8", name = "Hidden", player = true, friend = true, secret = true })
+local ps = addPlate("nameplate6", "hidden")
+ok(#ns.db.errors == errsBefore, "secret unit: no errors")
+ok(not overlayOf(ps) and ps.UnitFrame.alpha == 1, "secret unit: not highlighted, not hidden")
+removePlate("nameplate6")
+
+-- one broken unit can't stop the others
+setUnit("party2", { guid = "P-2", name = "Anduin", class = "PRIEST", player = true, friend = true, nameError = true })
+local pb = addPlate("nameplate7", "party2")
+ok(#ns.db.errors == errsBefore + 1, "error recorded in SavedVariables")
+ok(chat[#chat]:find("error"), "error printed to chat")
+units.party2.nameError = nil
+ns:Refresh()
+ok(o1.shown and o1.name.text == "Jaina", "other plates still work after an error")
+ok(overlayOf(pb) and overlayOf(pb).name.text == "Anduin", "broken unit recovers on next refresh")
+removePlate("nameplate7")
+
+-- /pb debug
+SlashCmdList.PARTYBEACON("debug")
+local dbg = table.concat(ns.db.lastDebug, " ")
+ok(dbg:find("nameplateShowFriendlyPlayers=1") and dbg:find("toc 16001"), "/pb debug reports CVars and client")
+
 -- ---------------------------------------------------- world markers
 ns.db.worldIcons = "instance"; ns:Refresh()
 ok(next(icons) == nil, "markers: none outside instance in instance mode")
@@ -327,13 +373,13 @@ group.kind = "party"; group.n = nil
 combat = true
 group.kind = nil
 fire("GROUP_ROSTER_UPDATE"); flush()
-ok(cvars.nameplateShowFriends == "1", "combat: CVar change deferred")
+ok(cvars.nameplateShowFriendlyPlayers == "1", "combat: CVar change deferred")
 ok(not o1.shown, "left group: overlay hidden immediately")
 combat = false
 fire("PLAYER_REGEN_ENABLED")
-ok(cvars.nameplateShowFriends == "0", "after combat: friendly plates restored")
+ok(cvars.nameplateShowFriendlyPlayers == "0", "after combat: friendly plates restored")
 ok(clickThrough == false, "after combat: click-through restored")
-ok(ns.db.cvarRestore.nameplateShowFriends == nil, "restore record cleared")
+ok(ns.db.cvarRestore.nameplateShowFriendlyPlayers == nil, "restore record cleared")
 
 -- ---------------------------------------------------- test mode (solo)
 setUnit("npc", { guid = "C-9", name = "Guard", friend = true })
@@ -343,9 +389,17 @@ alias.target = "npc"
 ns:SetTestMode(true)
 local o5 = overlayOf(p5)
 ok(o5 and o5.shown and o5.name.text == "Guard", "test mode highlights target")
-ok(cvars.nameplateShowFriends == "1", "test mode turns plates on")
+ok(cvars.nameplateShowFriendlyPlayers == "1", "test mode turns plates on")
+ok(cvars.nameplateShowFriendlyNpcs == "1" and cvars.nameplateShowAll == "1", "test mode shows friendly NPC plates")
+-- target with no nameplate -> explain why
+setUnit("faraway", { guid = "C-8", name = "Far Guard", friend = true })
+alias.target = "faraway"
+fire("PLAYER_TARGET_CHANGED"); flush()
+ok(chat[#chat]:find("no nameplate"), "test mode explains a target without a plate")
+alias.target = "npc"
+fire("PLAYER_TARGET_CHANGED"); flush()
 ns:SetTestMode(false)
-ok(not o5.shown and cvars.nameplateShowFriends == "0", "test mode off cleans up")
+ok(not o5.shown and cvars.nameplateShowFriendlyPlayers == "0", "test mode off cleans up")
 
 -- ---------------------------------------------------- options window
 ns:ToggleOptions()
@@ -379,10 +433,21 @@ SlashCmdList.PARTYBEACON("bogus"); ok(chat[#chat]:find("/pb status"), "unknown -
 -- ---------------------------------------------------- logout restores
 group.kind = "party"
 fire("GROUP_ROSTER_UPDATE"); flush()
-ok(cvars.nameplateShowFriends == "1", "regrouped: plates on")
+ok(cvars.nameplateShowFriendlyPlayers == "1", "regrouped: plates on")
 fire("PLAYER_LOGOUT")
-ok(cvars.nameplateShowFriends == "0", "logout: plates restored")
+ok(cvars.nameplateShowFriendlyPlayers == "0", "logout: plates restored")
 ok(ns.db.enabled == true, "logout: enabled setting preserved")
+
+ok(cvars.nameplateShowAll == "0" and cvars.nameplateShowFriendlyNpcs == "0", "logout: all CVars back to original")
+
+-- ---------------------------------------------------- Classic-style client
+cvars = { nameplateShowFriends = "0", nameplateShowAll = "1", nameplateMaxDistance = "20" }
+unknownSets = 0
+fire("GROUP_ROSTER_UPDATE"); flush()
+ok(cvars.nameplateShowFriends == "1" and unknownSets == 0, "classic client: uses nameplateShowFriends")
+group.kind = nil
+fire("GROUP_ROSTER_UPDATE"); flush()
+ok(cvars.nameplateShowFriends == "0", "classic client: restored")
 
 print(string.format("%d passed, %d failed", pass, fail))
 if fail > 0 then error("tests failed") end

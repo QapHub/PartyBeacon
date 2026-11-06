@@ -18,7 +18,7 @@ You can also bind a toggle key under Key Bindings > AddOns.
 - Size and outline
 
 **Nameplates**
-- Turns friendly nameplates on while you're grouped, and puts your setting back when you leave or log out
+- Turns friendly player nameplates and "always show nameplates" on while you're grouped, and puts your settings back when you leave or log out (WoW Forever only shows nameplates in combat unless "always show" is on)
 - Hides every other friendly nameplate so only your party stands out (your target is never hidden)
 - Can hide Blizzard's bar on party members, leaving only the beacon and name
 - Click-through friendly plates, max nameplate range, whole raid or just your subgroup
@@ -26,6 +26,10 @@ You can also bind a toggle key under Key Bindings > AddOns.
 **Shared world markers** (off by default)
 - Puts real raid icons (star, circle...) on party members. The whole group sees them.
 - Never takes an icon that's already on something it can see, never re-places an icon someone moved, and only clears icons it placed.
+
+## Troubleshooting
+- `/pb test` then target someone: if there's nothing to draw on, it says why in chat.
+- `/pb debug` prints the client version, the nameplate settings and the last error. Errors are also saved in `WTF\Account\<account>\SavedVariables\PartyBeacon.lua` on `/reload` or logout.
 
 ## Limits
 - Beacons and name tags are drawn on nameplates, because that's the only way an addon can attach anything to a character in the world. They show only when that person's nameplate is on screen and in range.

@@ -97,7 +97,10 @@ local function Configure(o, unit, slot)
     -- name
     if db.showName then
         SetFont(o.name, db.nameSize, db.nameOutline)
-        o.name:SetText(UnitName(unit) or "")
+        local name = UnitName(unit)
+        -- a hidden ("secret") name can still be displayed, just not tested
+        if not ns.issecret(name) and name == nil then name = "" end
+        o.name:SetText(name)
         o.name:SetTextColor(ns:ColorFor(db.nameColorMode, unit, slot, db.nameColor))
         o.name:Show()
     else
@@ -210,7 +213,7 @@ end
 
 function ns:RefreshPlates()
     if not self.db then return end
-    for unit in pairs(unitPlate) do self:UpdatePlate(unit) end
+    for unit in pairs(unitPlate) do self:Try("plate", self.UpdatePlate, self, unit) end
 end
 
 -- pick up plates that already exist (after /reload)

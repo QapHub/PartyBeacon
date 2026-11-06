@@ -1,7 +1,7 @@
 ## Interface: 16001
 ## Title: |cff33ffccParty|rBeacon
 ## Notes: Puts a beacon and a bright name tag over your party members so you can find them in a crowd. /pb
-## Version: 1.0.0
+## Version: 1.0.1
 ## SavedVariables: PartyBeaconDB
 ## IconTexture: Interface\Icons\Ability_Hunter_SniperShot
 
