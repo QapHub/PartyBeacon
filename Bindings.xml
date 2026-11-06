@@ -1,0 +1,5 @@
+<Bindings>
+    <Binding name="PARTYBEACON_TOGGLE" header="PARTYBEACON" category="ADDONS">
+        PartyBeacon_Toggle()
+    </Binding>
+</Bindings>
