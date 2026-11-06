@@ -8,6 +8,12 @@ You can also bind a toggle key under Key Bindings > AddOns.
 
 ## Options
 
+**Names only** (`/pb names on`, or the checkbox at the top of `/pb`)
+- Just a big name over party members in the colour you choose. No beacon, no health bars, and every other nameplate is hidden.
+- Optional: hide the game's own floating player names while grouped (`/pb gamenames on`), so party members don't show two names. This hides other friendly players' names too, and is put back when you leave group or log out.
+- Your other settings are kept and come back when you turn it off.
+- The game draws its own floating names itself and has no setting to colour them for party members, so this uses an invisible nameplate to carry the coloured name.
+
 **Over their head**
 - Beacon style: arrow, chevrons, gem, light pillar, raid icon (only you see it), Hunter's Mark icon, or none
 - Beacon colour: different per member, class colour, custom colour, or rainbow
@@ -18,7 +24,7 @@ You can also bind a toggle key under Key Bindings > AddOns.
 - Size and outline
 
 **Nameplates**
-- Turns friendly player nameplates and "always show nameplates" on while you're grouped, and puts your settings back when you leave or log out (WoW Forever only shows nameplates in combat unless "always show" is on)
+- Turns friendly player nameplates and "always show nameplates" on while you're grouped, and puts your settings back when you leave or log out (WoW Forever only shows nameplates in combat unless "always show" is on). If you had "always show" off, enemy nameplates are kept combat-only (plus your target), the way you had them.
 - Hides every other friendly nameplate so only your party stands out (your target is never hidden)
 - Can hide Blizzard's bar on party members, leaving only the beacon and name
 - Click-through friendly plates, max nameplate range, whole raid or just your subgroup

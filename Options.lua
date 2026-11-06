@@ -31,6 +31,19 @@ local function Changed()
     ns:Refresh()
 end
 
+-- Dim and lock a widget while "Names only" overrides its setting.
+local function Lockable(w, key)
+    local update = w.Update
+    w.Update = function()
+        update()
+        local locked = ns.db.namesOnly and (key == "style" or key == "showName"
+            or key == "hidePartyPlate" or key == "hideOthers")
+        w:SetAlpha(locked and 0.35 or 1)
+        w:EnableMouse(not locked)
+    end
+    return w
+end
+
 local function Tooltip(frame, text)
     if not text then return end
     frame:SetScript("OnEnter", function(self)
@@ -262,6 +275,9 @@ function ns:CreateOptions()
 
     Check(f, "|cffffffffEnabled|r", "enabled", L, -52,
         "Master switch. Highlights only show while you're in a group (or in test mode).")
+    Check(f, "|cffffffffNames only|r", "namesOnly", L + 112, -52,
+        "Just a big coloured name over party members: no beacon, no health bars, and every other "
+        .. "nameplate hidden. Your other settings are kept and come back when you turn this off.")
 
     local test = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     test:SetSize(210, 24)
@@ -276,8 +292,8 @@ function ns:CreateOptions()
     Header(f, "Over their head", L, -90)
     local styleValues = {}
     for _, k in ipairs(ns.STYLE_ORDER) do styleValues[#styleValues + 1] = { k, ns.STYLES[k].label } end
-    Cycle(f, "Beacon style", "style", styleValues, L, -116,
-        "Raid icon style is drawn locally - only you see it, nobody's real marker changes.")
+    Lockable(Cycle(f, "Beacon style", "style", styleValues, L, -116,
+        "Raid icon style is drawn locally - only you see it, nobody's real marker changes."), "style")
     Cycle(f, "Beacon colour", "colorMode", COLOR_MODES, L, -158)
     Swatch(f, "Custom beacon colour", "color", L, -200)
     Slider(f, "Beacon size", "size", 16, 128, 2, L, -226)
@@ -287,8 +303,8 @@ function ns:CreateOptions()
     Check(f, "Pulse the glow", "pulse", L, -354)
 
     Header(f, "Name tag", L, -390)
-    Check(f, "Show big coloured name", "showName", L, -414,
-        "A large name in a colour that stands out, drawn above their head.")
+    Lockable(Check(f, "Show big coloured name", "showName", L, -414,
+        "A large name in a colour that stands out, drawn above their head."), "showName")
     Cycle(f, "Name colour", "nameColorMode", COLOR_MODES, L, -442)
     Swatch(f, "Custom name colour", "nameColor", L, -484)
     Slider(f, "Name size", "nameSize", 8, 32, 1, L, -510)
@@ -299,31 +315,41 @@ function ns:CreateOptions()
     Check(f, "Turn on friendly nameplates", "autoPlates", R, -114,
         "Beacons ride on nameplates, so friendly ones need to be on. Turned on while grouped "
         .. "and put back the way you had it when you leave group or log out.")
-    Check(f, "Hide other friendly plates", "hideOthers", R, -138,
+    Lockable(Check(f, "Hide other friendly plates", "hideOthers", R, -138,
         "Hides nameplates of other players and friendly NPCs, so only your party stands out. "
-        .. "Your current target is never hidden.")
-    Check(f, "Hide party bars (beacon only)", "hidePartyPlate", R, -162,
-        "Hides Blizzard's health bar/name on party members, leaving just the beacon and name tag.")
+        .. "Your current target is never hidden."), "hideOthers")
+    Lockable(Check(f, "Hide party bars (beacon only)", "hidePartyPlate", R, -162,
+        "Hides Blizzard's health bar/name on party members, leaving just the beacon and name tag."), "hidePartyPlate")
     Check(f, "Click through friendly plates", "clickThrough", R, -186,
         "Friendly nameplates won't catch your mouse clicks.")
     Check(f, "Max nameplate range", "farPlates", R, -210,
         "Raises nameplate distance to the client maximum so beacons show from further away.")
     Cycle(f, "Who to highlight in a raid", "scope", SCOPES, R, -240)
+    local gn = Check(f, "Hide game's player names", "hideGameNames", R, -282,
+        "Names only mode: hides the game's own floating names for friendly players while you're "
+        .. "grouped, so party members don't get two names. Other friendly players' names hide too. "
+        .. "Put back when you leave group or log out.")
+    local gnUpdate = gn.Update
+    gn.Update = function()
+        gnUpdate()
+        gn:SetAlpha(ns.db.namesOnly and 1 or 0.35)
+        gn:EnableMouse(ns.db.namesOnly and true or false)
+    end
 
-    Header(f, "Shared world markers", R, -290)
+    Header(f, "Shared world markers", R, -320)
     local note = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    note:SetPoint("TOPLEFT", R, -314)
+    note:SetPoint("TOPLEFT", R, -344)
     note:SetWidth(240)
     note:SetJustifyH("LEFT")
     note:SetText("Inside dungeons and raids the game blocks addons from friendly nameplates, "
         .. "so beacons can't show there. This puts real raid icons on party members instead. "
         .. "|cffffaa00Everyone in the group sees them.|r It never takes an icon that's "
         .. "already in use and only clears icons it placed.")
-    Cycle(f, "Place markers", "worldIcons", MARKER_MODES, R, -400)
+    Cycle(f, "Place markers", "worldIcons", MARKER_MODES, R, -430)
     local iconLabel = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    iconLabel:SetPoint("TOPLEFT", R + 4, -444)
+    iconLabel:SetPoint("TOPLEFT", R + 4, -474)
     iconLabel:SetText("Icon for each party member")
-    for i = 1, 4 do IconPicker(f, i, R + 4 + (i - 1) * 40, -460) end
+    for i = 1, 4 do IconPicker(f, i, R + 4 + (i - 1) * 40, -490) end
 
     local reset = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     reset:SetSize(120, 22)

@@ -113,6 +113,7 @@ function UnitClass(t) local u = U(t); return u and u.class, u and u.class end
 function UnitIsPlayer(t) local u = U(t); return u and u.player or false end
 function UnitIsUnit(a, b) local x, y = U(a), U(b); return x ~= nil and y ~= nil and x.guid == y.guid end
 function UnitIsFriend(_, t) local u = U(t); if u and u.secret then return SECRET end; return u and u.friend or false end
+function UnitAffectingCombat(t) local u = U(t); return u and u.fighting or false end
 function UnitCanAttack(_, t) local u = U(t); return u and not u.friend or false end
 
 local icons = {}        -- guid -> icon
@@ -135,7 +136,7 @@ function InCombatLockdown() return combat end
 -- nameplateShowFriendlyPlayers, and plates only show in combat unless ShowAll is on.
 local cvars = { nameplateShowFriendlyPlayers = "0", nameplateShowAll = "0",
                 nameplateShowFriendlyNpcs = "0", nameplateShowEnemies = "1",
-                nameplateMaxDistance = "20" }
+                nameplateMaxDistance = "20", UnitNameFriendlyPlayerName = "1" }
 local unknownSets = 0
 function GetCVar(n) return cvars[n] end
 function SetCVar(n, v)
@@ -236,7 +237,21 @@ ok(not overlayOf(p2), "stranger gets no overlay")
 
 setUnit("boar", { guid = "C-1", name = "Boar", friend = false })
 local p3 = addPlate("nameplate3", "boar")
-ok(p3.UnitFrame.alpha == 1, "enemy plate never hidden")
+-- you had "always show" off, so enemy plates stay combat-only like before
+ok(p3.UnitFrame.alpha == 0, "enemy plate hidden out of combat (as before the addon)")
+alias.target = "boar"; fire("PLAYER_TARGET_CHANGED")
+ok(p3.UnitFrame.alpha == 1, "targeted enemy plate shown")
+alias.target = nil; fire("PLAYER_TARGET_CHANGED")
+fire("PLAYER_REGEN_DISABLED")
+ok(p3.UnitFrame.alpha == 0, "in combat: uninvolved enemy stays hidden")
+units.boar.fighting = true; fire("UNIT_FLAGS", "nameplate3")
+ok(p3.UnitFrame.alpha == 1, "in combat: enemy fighting shows")
+units.boar.fighting = nil
+fire("PLAYER_REGEN_ENABLED")
+ok(p3.UnitFrame.alpha == 0, "after combat: hidden again")
+ns.db.cvarRestore.nameplateShowAll = "1"; ns:RefreshPlates()
+ok(p3.UnitFrame.alpha == 1, "enemy plates untouched if you already had always-show on")
+ns.db.cvarRestore.nameplateShowAll = "0"; ns:RefreshPlates()
 
 -- targeting the stranger shows their plate again
 alias.target = "stranger"
@@ -292,6 +307,30 @@ ns.db.farPlates = true; ns:Refresh()
 ok(cvars.nameplateMaxDistance == "41", "far plates raised")
 ns.db.farPlates = false; ns:Refresh()
 ok(cvars.nameplateMaxDistance == "20", "far plates restored")
+
+-- names only mode
+ns.db.style = "arrow"
+ns.db.namesOnly = true; ns:Refresh()
+ok(o1.shown and o1.name.shown and o1.name.text == "Jaina", "names only: name shown")
+ok(not o1.holder.shown, "names only: no beacon")
+ok(p1.UnitFrame.alpha == 0, "names only: party bar hidden")
+ok(ns.db.style == "arrow" and ns.db.hidePartyPlate == false, "names only: real settings untouched")
+ok(cvars.UnitNameFriendlyPlayerName == "1", "names only: game names left alone by default")
+ns.db.hideOthers = false; ns:Refresh()
+setUnit("stranger2", { guid = "P-10", name = "Other", player = true, friend = true })
+local pso = addPlate("nameplate8", "stranger2")
+ok(pso.UnitFrame.alpha == 0, "names only: other friendly plates hidden even if that option is off")
+removePlate("nameplate8")
+ns.db.hideOthers = true
+ns.db.hideGameNames = true; ns:Refresh()
+ok(cvars.UnitNameFriendlyPlayerName == "0", "names only: game player names hidden when asked")
+ok(ns.db.cvarRestore.UnitNameFriendlyPlayerName == "1", "names only: game names original remembered")
+ns.db.namesOnly = false; ns:Refresh()
+ok(cvars.UnitNameFriendlyPlayerName == "1", "names only off: game names back")
+ok(o1.holder.shown and o1.icon.texture:find("arrow") and p1.UnitFrame.alpha == 1, "names only off: previous look back")
+ns.db.hideGameNames = false
+SlashCmdList.PARTYBEACON("names on"); ok(ns.db.namesOnly and not o1.holder.shown, "/pb names on")
+SlashCmdList.PARTYBEACON("names off"); ok(not ns.db.namesOnly and o1.holder.shown, "/pb names off")
 
 -- secret (hidden) unit info: no error, plate left alone
 local errsBefore = #ns.db.errors

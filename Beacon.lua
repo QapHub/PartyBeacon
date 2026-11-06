@@ -91,11 +91,12 @@ end
 local function Configure(o, unit, slot)
     local db = ns.db
     o.unit, o.slot = unit, slot
-    o.rainbowName = db.showName and db.nameColorMode == "rainbow"
+    local showName, style = ns:Eff("showName"), ns:Eff("style")
+    o.rainbowName = showName and db.nameColorMode == "rainbow"
     o.rainbowBeacon = db.colorMode == "rainbow"
 
     -- name
-    if db.showName then
+    if showName then
         SetFont(o.name, db.nameSize, db.nameOutline)
         local name = UnitName(unit)
         -- a hidden ("secret") name can still be displayed, just not tested
@@ -108,9 +109,9 @@ local function Configure(o, unit, slot)
     end
 
     -- beacon
-    local st = ns.STYLES[db.style]
+    local st = ns.STYLES[style]
     o.holder:ClearAllPoints()
-    if db.showName then
+    if showName then
         o.holder:SetPoint("BOTTOM", o.name, "TOP", 0, 2 + db.offset)
     else
         o.holder:SetPoint("BOTTOM", o, "BOTTOM", 0, db.offset)
@@ -203,11 +204,11 @@ function ns:UpdatePlate(unit)
     local slot = self:HighlightSlot(unit)
     if slot then
         Configure(overlays[plate] or CreateOverlay(plate), unit, slot)
-        SetBarHidden(plate, self.db.hidePartyPlate)
+        SetBarHidden(plate, self:Eff("hidePartyPlate"))
     else
         local o = overlays[plate]
         if o then StopOverlay(o) end
-        SetBarHidden(plate, self:ShouldHideOther(unit))
+        SetBarHidden(plate, self:ShouldHideOther(unit) or self:ShouldHideEnemy(unit))
     end
 end
 
@@ -243,7 +244,7 @@ driver:SetScript("OnUpdate", function(_, dt)
             end
             if o.rainbowBeacon then
                 local r, g, b = ns:ColorFor("rainbow", o.unit, o.slot, nil, now)
-                local st = ns.STYLES[db.style]
+                local st = ns.STYLES[ns:Eff("style")]
                 if st and st.tint then o.icon:SetVertexColor(r, g, b) end
                 o.glow:SetVertexColor(r, g, b)
             end

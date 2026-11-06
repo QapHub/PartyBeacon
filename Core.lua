@@ -13,10 +13,16 @@
 local ADDON, ns = ...
 _G.PartyBeacon = ns
 
-ns.version = "1.0.1"
+ns.version = "1.1.0"
 
 local DEFAULTS = {
     enabled        = true,
+
+    -- "Names only": just a coloured name over party members - no beacon, no
+    -- health bars, no other nameplates. Overrides the matching settings
+    -- below without changing them, so turning it off brings your look back.
+    namesOnly      = false,
+    hideGameNames  = false,      -- names only: hide the game's own friendly player names while grouped
 
     -- beacon over the head
     style          = "arrow",    -- arrow | chevron | diamond | beam | mark | hunter | none
@@ -189,6 +195,13 @@ function ns:RebuildRoster()
     end
 end
 
+-- Setting after "Names only" overrides are applied.
+local NAMES_ONLY = { style = "none", showName = true, hidePartyPlate = true, hideOthers = true }
+function ns:Eff(key)
+    if self.db.namesOnly and NAMES_ONLY[key] ~= nil then return NAMES_ONLY[key] end
+    return self.db[key]
+end
+
 function ns:IsActive()
     return self.db.enabled and (IsInGroup() or self.testMode) and true or false
 end
@@ -205,10 +218,23 @@ function ns:HighlightSlot(unit)
 end
 
 function ns:ShouldHideOther(unit)
-    if not (self:IsActive() and self.db.hideOthers) then return false end
+    if not (self:IsActive() and self:Eff("hideOthers")) then return false end
     if Safe(UnitIsUnit(unit, "target")) then return false end   -- never hide what you've clicked
     -- if the game won't tell us, leave the plate alone
     return Safe(UnitIsFriend("player", unit)) and not Safe(UnitCanAttack("player", unit)) and true or false
+end
+
+-- We turn "always show nameplates" on so party plates appear out of combat.
+-- If you had it off, enemy plates would suddenly show all the time too, so
+-- keep them the way you had them: only in combat (or when targeted).
+function ns:ShouldHideEnemy(unit)
+    if not self:IsActive() or self.db.cvarRestore.nameplateShowAll ~= "0" then return false end
+    if Safe(UnitIsUnit(unit, "target")) then return false end
+    if not Safe(UnitCanAttack("player", unit)) then return false end
+    if not self.inCombat then return true end
+    local fighting = UnitAffectingCombat(unit)
+    if issecret(fighting) then return false end
+    return not fighting
 end
 
 -- ---------------------------------------------------------------------------
@@ -255,6 +281,7 @@ function ns:ApplySettings()
     WantCVar("nameplateShowFriendlyNpcs", npcs)
     WantCVar("nameplateShowFriendlyNPCs", npcs)
     WantCVar("nameplateMaxDistance", (active and db.farPlates) and "41" or nil)
+    WantCVar("UnitNameFriendlyPlayerName", (active and db.namesOnly and db.hideGameNames) and "0" or nil)
 
     local NP = C_NamePlate
     if NP and NP.SetNamePlateFriendlyClickThrough then
@@ -395,7 +422,7 @@ function ns:Debug()
     add("platesTracked", p)
     for _, cv in ipairs({ "nameplateShowFriendlyPlayers", "nameplateShowFriends", "nameplateShowAll",
                           "nameplateShowEnemies", "nameplateShowFriendlyNpcs", "nameplateMaxDistance",
-                          "nameplateShowOnlyNameForFriendlyPlayerUnits" }) do
+                          "nameplateShowOnlyNameForFriendlyPlayerUnits", "UnitNameFriendlyPlayerName" }) do
         add(cv, GetCVar(cv))
     end
     local tp = UnitExists("target") and C_NamePlate.GetNamePlateForUnit("target")
@@ -460,6 +487,7 @@ local function OnEvent(event, arg1)
         ev:UnregisterEvent("ADDON_LOADED")
         if ns.CreateOptions then ns:Try("options window", ns.CreateOptions, ns) end
     elseif event == "PLAYER_LOGIN" then
+        ns.inCombat = InCombatLockdown() and true or false
         ns:Try("scan", ns.ScanPlates, ns)
         ns:Refresh()
         Print("v" .. ns.version .. " loaded - |cffffff00/pb|r for options, |cffffff00/pb test|r to preview on your target.")
@@ -475,7 +503,14 @@ local function OnEvent(event, arg1)
     elseif event == "UNIT_NAME_UPDATE" then
         if ns.unitPlate[arg1] then ns:UpdatePlate(arg1) end
     elseif event == "PLAYER_REGEN_ENABLED" then
+        ns.inCombat = false
         if ns.pendingSettings then ns:ApplySettings() end
+        ns:RefreshPlates()
+    elseif event == "PLAYER_REGEN_DISABLED" then
+        ns.inCombat = true
+        ns:RefreshPlates()
+    elseif event == "UNIT_FLAGS" then
+        if ns.unitPlate[arg1] then ns:UpdatePlate(arg1) end
     elseif event == "PLAYER_LOGOUT" then
         -- leave the game's settings exactly as we found them
         local was = ns.db.enabled
@@ -498,7 +533,7 @@ for _, e in ipairs({
     "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_LOGOUT", "PLAYER_ENTERING_WORLD",
     "GROUP_ROSTER_UPDATE", "ZONE_CHANGED_NEW_AREA", "PLAYER_TARGET_CHANGED",
     "NAME_PLATE_UNIT_ADDED", "NAME_PLATE_UNIT_REMOVED", "UNIT_NAME_UPDATE",
-    "PLAYER_REGEN_ENABLED",
+    "PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED", "UNIT_FLAGS",
 }) do
     ev:RegisterEvent(e)
 end
@@ -515,6 +550,8 @@ local function Help()
         "/pb - open the options window",
         "/pb on | off | toggle",
         "/pb test - preview on your current target (works solo)",
+        "/pb names on|off - names only: just a coloured name, no beacon or bars",
+        "/pb gamenames on|off - (names only) hide the game's own player names",
         "/pb style arrow|chevron|diamond|beam|mark|hunter|none",
         "/pb color slot|class|custom|rainbow  (beacon colour)",
         "/pb name slot|class|custom|rainbow|off  (name colour)",
@@ -530,9 +567,9 @@ local function Status()
     local db = ns.db
     local n = 0
     for _ in pairs(ns.members) do n = n + 1 end
-    Print(string.format("%s, %d member(s) tracked, style %s, beacon colour %s, name %s, markers %s%s",
-        db.enabled and "on" or "off", n, db.style, db.colorMode,
-        db.showName and db.nameColorMode or "off", db.worldIcons,
+    Print(string.format("%s%s, %d member(s) tracked, style %s, beacon colour %s, name %s, markers %s%s",
+        db.enabled and "on" or "off", db.namesOnly and " (names only)" or "", n, ns:Eff("style"), db.colorMode,
+        ns:Eff("showName") and db.nameColorMode or "off", db.worldIcons,
         ns.testMode and ", TEST MODE" or ""))
     local inInstance, kind = IsInInstance()
     if inInstance and kind ~= "none" then
@@ -566,6 +603,13 @@ SlashCmdList.PARTYBEACON = function(msg)
         Print("other friendly nameplates " .. (db.hideOthers and "hidden" or "shown"))
     elseif cmd == "markers" and (arg == "off" or arg == "instance" or arg == "always") then
         db.worldIcons = arg; ns:Refresh(); Print("shared world markers: " .. arg)
+    elseif cmd == "names" and (arg == "on" or arg == "off") then
+        db.namesOnly = (arg == "on"); ns:Refresh()
+        Print("names only " .. (db.namesOnly and "|cff33ff33on|r - just a coloured name over party members" or "off"))
+    elseif cmd == "gamenames" and (arg == "on" or arg == "off") then
+        db.hideGameNames = (arg == "on"); ns:Refresh()
+        Print(db.hideGameNames and "the game's own player names will be hidden while grouped in names-only mode"
+            or "the game's own player names are left alone")
     elseif cmd == "status" then Status()
     elseif cmd == "debug" then ns:Debug()
     elseif cmd == "reset" then
