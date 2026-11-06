@@ -44,3 +44,6 @@ Download this repo (Code > Download ZIP), and copy everything except `tools/` an
 `tests/` into a folder named `PartyBeacon` in
 `World of Warcraft\_forever_\Interface\AddOns\`, so the path ends in
 `AddOns\PartyBeacon\PartyBeacon.toc`. Restart the game or `/reload`.
+
+## License
+MIT, see [LICENSE](LICENSE).
